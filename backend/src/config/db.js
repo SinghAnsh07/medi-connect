@@ -2,23 +2,24 @@ import mongoose from "mongoose";
 
 const connectDB = async () => {
   try {
-    // Use correct environment variable name
-    const connectionString = process.env.MONGO_URI;
+    const rawUri = (process.env.MONGO_URI || "").trim();
+    const dbName = (process.env.DB_NAME || "").trim();
 
-    // Debug log to verify connection string
-    console.log("Connecting to MongoDB:", connectionString);
+    // If a full Mongo URI already includes query params or database segment, use it as-is.
+    const hasQuery = rawUri.includes("?");
+    const hasDbSegment = /\/[^/?]+$/.test(rawUri);
+    const mongoUri = hasQuery || hasDbSegment || !dbName ? rawUri : `${rawUri}/${dbName}`;
 
-    // Connect to MongoDB without deprecated options
-    const db = await mongoose.connect(connectionString);
-
-    console.log(`\n MongoDB Connected to DB: ${db.connection.name}`);
-    console.log(`Host: ${db.connection.host}\n`);
-
+    const db = await mongoose.connect(mongoUri);
+    console.log(`\n✅ MongoDB Connected to DB host: ${db.connection.host}`);
     return db;
   } catch (err) {
-    console.error("MongoDB Connection Error:", err.message);
-    process.exit(1);
+    console.log("❌ MongoDB connection Error:", err);
+    process.exit();
   }
 };
 
 export default connectDB;
+
+// ✅ ✅ ✅ THIS is the missing piece:
+export { mongoose };

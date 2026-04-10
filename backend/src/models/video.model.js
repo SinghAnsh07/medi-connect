@@ -51,7 +51,7 @@ const videoCallSchema = new mongoose.Schema({
       }
     }
   }],
-  
+
   initiator: {
     userId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -64,40 +64,40 @@ const videoCallSchema = new mongoose.Schema({
       required: true
     }
   },
-  
+
   callStatus: {
     type: String,
     enum: ['initiated', 'ringing', 'ongoing', 'ended', 'rejected'],
     default: 'initiated'
   },
-  
+
   callType: {
     type: String,
     enum: ['video', 'audio'],
     default: 'video'
   },
-  
+
   roomId: {
     type: String,
     required: true,
     unique: true
   },
-  
+
   startTime: {
     type: Date,
     default: null
   },
-  
+
   endTime: {
     type: Date,
     default: null
   },
-  
+
   duration: {
     type: Number, // Duration in seconds
     default: 0
   },
-  
+
   callQuality: {
     rating: {
       type: Number,
@@ -117,7 +117,7 @@ const videoCallSchema = new mongoose.Schema({
       enum: ['Doctor', 'Client']
     }
   },
-  
+
   technicalIssues: [{
     issue: {
       type: String,
@@ -144,7 +144,7 @@ const videoCallSchema = new mongoose.Schema({
 
 // Index for efficient queries
 videoCallSchema.index({ 'participants.userId': 1, callStatus: 1 });
-videoCallSchema.index({ roomId: 1 });
+// roomId index is automatically created by unique: true on line 83
 videoCallSchema.index({ createdAt: -1 });
 videoCallSchema.index({ 'participants.userId': 1, createdAt: -1 });
 

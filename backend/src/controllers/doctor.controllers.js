@@ -17,6 +17,12 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+const cookieOptions = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax'
+};
+
 const generateAccessRefreshTokens = async (doctorId) => {
   try {
     const doctor = await Doctor.findById(doctorId);
@@ -54,13 +60,15 @@ const registerDoctor = asyncHandler(async (req, res) => {
     const otp = generateOTP();
     const otpExpires = new Date(Date.now() + 5 * 60 * 1000);
 
-    const emailSent = await transporter.sendMail({
+    // Send Email OTP (non-blocking — don't crash registration if email fails)
+    transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: email,
-      subject: "Your OTP for Email Verification",
+      subject: "Your OTP for MediConnect Verification",
       html: `<p>Your OTP is: <strong>${otp}</strong></p><p>This OTP is valid for 5 minutes.</p>`,
+    }).catch((err) => {
+      console.warn("⚠️ Email OTP failed (non-fatal):", err.message);
     });
-    if (!emailSent) throw new ApiError(500, "Failed to send email OTP");
 
     const doctor = await Doctor.create({
       name,
@@ -113,11 +121,11 @@ const loginDoctor = asyncHandler(async (req, res) => {
     throw new ApiError(404, "requested User doesn't even exist");
   }
 
-   // Check if password is correct
-   const valid = await doctor.isPasswordCorrect(password);
-   if (!valid) {
-     throw new ApiError(401, "Invalid user credentials");
-   }
+  // Check if password is correct
+  const valid = await doctor.isPasswordCorrect(password);
+  if (!valid) {
+    throw new ApiError(401, "Invalid user credentials");
+  }
   if (!doctor.verified) throw new ApiError(401, "Please verify your email first");
 
   // Generate Access and Refresh Tokens
@@ -129,11 +137,6 @@ const loginDoctor = asyncHandler(async (req, res) => {
   const loggedUserFromDB = await Doctor.findById(doctor._id).select(
     "-password -refreshToken"
   );
-
-  const cookieOptions = {
-    httpOnly: true,
-    secure: true,
-  };
 
   // Return Logged In User and Tokens
   return res
@@ -154,11 +157,11 @@ const loginDoctor = asyncHandler(async (req, res) => {
 });
 
 const logoutDoctor = asyncHandler(async (req, res) => {
+  if (!req.doctor?._id) {
+    throw new ApiError(401, "Unauthorized: Doctor session required");
+  }
+
   await Doctor.findByIdAndUpdate(req.doctor._id, { $unset: { refreshToken: 1 } }, { new: true });
-  const cookieOptions = {
-    httpOnly: true,
-    secure: true,
-  };
 
   return res
     .status(200)
@@ -169,38 +172,33 @@ const logoutDoctor = asyncHandler(async (req, res) => {
 
 const refreshAccessToken = asyncHandler(async (req, res) => {
   const incomingToken = req.cookies.refreshToken || req.body.refreshToken;
- 
- 
-  if (!incomingToken) 
-  throw new ApiError(401, "Unauthorized Request");
+
+
+  if (!incomingToken)
+    throw new ApiError(401, "Unauthorized Request");
 
   const decodedToken = jwt.verify(
     incomingToken,
-     process.env.REFRESH_TOKEN_SECRET
-    );
+    process.env.REFRESH_TOKEN_SECRET
+  );
 
 
   const doctor = await Doctor.findById(decodedToken._id);
-  if (!doctor || incomingToken !== doctor.refreshToken) 
+  if (!doctor || incomingToken !== doctor.refreshToken)
     throw new ApiError(401, "Invalid or expired refresh token");
 
-  const cookieOptions = {
-    httpOnly: true,
-    secure: true,
-  };
-
-  const { accessToken, newRefreshToken } = await generateAccessRefreshTokens(
+  const { accessToken, refreshToken } = await generateAccessRefreshTokens(
     doctor._id
   );
 
   return res
     .status(200)
     .cookie("accessToken", accessToken, cookieOptions)
-    .cookie("refreshToken", newRefreshToken, cookieOptions)
+    .cookie("refreshToken", refreshToken, cookieOptions)
     .json(
       new ApiResponse(
         200,
-        { accessToken, refreshToken: newRefreshToken },
+        { accessToken, refreshToken },
         "Token Refreshed"
       )
     );
@@ -208,6 +206,10 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 
 // Get Current user data lol
 const getCurrentDoctor = asyncHandler(async (req, res) => {
+  if (!req.doctor?._id) {
+    throw new ApiError(401, "Unauthorized: Doctor session required");
+  }
+
   return res
     .status(200)
     .json(new ApiResponse(200, req.doctor, "Current User Data"));
@@ -216,7 +218,7 @@ const getCurrentDoctor = asyncHandler(async (req, res) => {
 
 const updateDoctor = asyncHandler(async (req, res) => {
   const { name, email, phone, password, specialization, experience, degree, age, gender } = req.body;
-  
+
   const doctor = await Doctor.findById(req.doctor._id);
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
@@ -275,11 +277,9 @@ const verifyOtp = asyncHandler(async (req, res) => {
 
   // Generate authentication tokens
   const accessToken = jwt.sign({ _id: doctor._id }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRY });
-  const refreshToken = jwt.sign({ _id: doctor._id }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRY});
+  const refreshToken = jwt.sign({ _id: doctor._id }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRY });
 
   // Set secure cookies
-  const cookieOptions = { httpOnly: true, secure: true };
-
   return res
     .status(200)
     .cookie("accessToken", accessToken, cookieOptions)
@@ -302,23 +302,23 @@ const getAllDoctors = asyncHandler(async (req, res) => {
 
     // Build filter object
     const filter = {};
-    
+
     if (specialization) {
       filter.specialization = { $regex: specialization, $options: 'i' };
     }
-    
+
     if (experience) {
       filter.experience = { $gte: parseInt(experience) };
     }
-    
+
     if (gender) {
       filter.gender = gender;
     }
-    
+
     if (verified !== undefined) {
       filter.verified = verified === 'true';
     }
-    
+
     // Search functionality (name, email, specialization)
     if (search) {
       filter.$or = [
@@ -330,10 +330,10 @@ const getAllDoctors = asyncHandler(async (req, res) => {
 
     // Calculate pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    
+
     // Get total count for pagination info
     const totalDoctors = await Doctor.countDocuments(filter);
-    
+
     // Fetch doctors with pagination and exclude sensitive fields
     const doctors = await Doctor.find(filter)
       .select('-password -refreshToken -otp -otpExpires')
@@ -406,12 +406,12 @@ const getDoctorById = asyncHandler(async (req, res) => {
 });
 
 // Export the new functions along with existing ones
-export { 
-  registerDoctor, 
-  loginDoctor, 
-  verifyOtp, 
-  verifyEmail, 
-  logoutDoctor, 
+export {
+  registerDoctor,
+  loginDoctor,
+  verifyOtp,
+  verifyEmail,
+  logoutDoctor,
   refreshAccessToken,
   getCurrentDoctor,
   updateDoctor,

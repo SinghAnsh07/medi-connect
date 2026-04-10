@@ -1,7 +1,5 @@
-import dotenv from 'dotenv';
-dotenv.config(); // Loads .env into process.env
+import "dotenv/config";  // Load environment variables
 import express from "express";
-import razorpay from "./src/utils/razorpay.js";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import http from "http";   
@@ -25,8 +23,19 @@ app.use(cookieParser());
 app.use(express.static("public"));
 
 // Enable CORS
+const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 app.use(cors({
-  origin: "http://localhost:5173",
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error("Not allowed by CORS"));
+  },
   credentials: true,
 }));
 
@@ -106,12 +115,14 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+
+// === Start Server ===
 const PORT = process.env.PORT || 5000;
 
 // Socket.IO setup
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN || `http://localhost:${PORT}`,
+    origin: allowedOrigins,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
   },
@@ -172,6 +183,7 @@ app.use((err, req, res, next) => {
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
   });
 });
+
 
 
 
